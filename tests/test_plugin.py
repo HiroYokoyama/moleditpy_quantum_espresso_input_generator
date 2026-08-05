@@ -13,6 +13,7 @@ class FakeContext:
     def __init__(self, main_window=None):
         self.main_window = main_window
         self.export_actions = []
+        self.analysis_tools = []
         self.save_handlers = []
         self.load_handlers = []
         self.reset_handlers = []
@@ -22,6 +23,9 @@ class FakeContext:
 
     def add_export_action(self, label, callback):
         self.export_actions.append((label, callback))
+
+    def add_analysis_tool(self, label, callback):
+        self.analysis_tools.append((label, callback))
 
     def register_save_handler(self, callback):
         self.save_handlers.append(callback)
@@ -62,11 +66,11 @@ def context():
 
 def test_plugin_metadata():
     assert plugin.PLUGIN_NAME == "Quantum ESPRESSO Input Generator"
-    assert plugin.PLUGIN_VERSION == "0.1.0"
+    assert plugin.PLUGIN_VERSION == "0.2.0"
     assert plugin.PLUGIN_AUTHOR == "HiroYokoyama"
     assert plugin.PLUGIN_CATEGORY == "Export"
     assert plugin.PLUGIN_DEPENDENCIES == ["numpy"]
-    assert "quantum-espresso" in plugin.PLUGIN_TAGS
+    assert plugin.PLUGIN_TAGS == ["DFT", "Generator"]
     assert plugin.PLUGIN_DESCRIPTION.strip()
 
 
@@ -91,6 +95,86 @@ def test_initialize_registers_export_action(context):
     assert [label for label, _ in context.export_actions] == [
         "Quantum ESPRESSO Input (pw.x)..."
     ]
+
+
+def test_initialize_registers_the_surface_energy_tool(context):
+    assert [label for label, _ in context.analysis_tools] == ["Surface Energy (QE)..."]
+
+
+def test_surface_energy_tool_opens_and_reuses_its_window(context, monkeypatch):
+    import qe_input_generator.surface_dialog as surface_dialog
+
+    opened = []
+
+    class _Dialog:
+        def __init__(self, parent=None, get_area=None):
+            self.get_area = get_area
+            self._visible = False
+            opened.append(self)
+
+        def show(self):
+            self._visible = True
+
+        def isVisible(self):
+            return self._visible
+
+        def raise_(self):
+            pass
+
+        def activateWindow(self):
+            pass
+
+    monkeypatch.setattr(surface_dialog, "SurfaceEnergyDialog", _Dialog)
+    callback = dict(context.analysis_tools)["Surface Energy (QE)..."]
+    callback()
+    callback()
+    assert len(opened) == 1  # the second call reuses the open window
+
+
+def test_surface_energy_area_comes_from_the_open_generator(context, monkeypatch):
+    import qe_input_generator.surface_dialog as surface_dialog
+
+    captured = {}
+
+    class _Dialog:
+        def __init__(self, parent=None, get_area=None):
+            captured["get_area"] = get_area
+
+        def show(self):
+            pass
+
+        def isVisible(self):
+            return False
+
+    monkeypatch.setattr(surface_dialog, "SurfaceEnergyDialog", _Dialog)
+
+    from qe_input_generator import cell_model as cm
+
+    cell = cm.cell_from_molecule(["H"], [[0.0, 0.0, 0.0]], padding=2.0)
+    context.windows[plugin.WINDOW_ID] = type("G", (), {"_cell": cell})()
+
+    dict(context.analysis_tools)["Surface Energy (QE)..."]()
+    assert captured["get_area"]() == pytest.approx(cm.surface_area(cell))
+
+
+def test_surface_energy_area_is_none_without_a_structure(context, monkeypatch):
+    import qe_input_generator.surface_dialog as surface_dialog
+
+    captured = {}
+
+    class _Dialog:
+        def __init__(self, parent=None, get_area=None):
+            captured["get_area"] = get_area
+
+        def show(self):
+            pass
+
+        def isVisible(self):
+            return False
+
+    monkeypatch.setattr(surface_dialog, "SurfaceEnergyDialog", _Dialog)
+    dict(context.analysis_tools)["Surface Energy (QE)..."]()
+    assert captured["get_area"]() is None
 
 
 def test_initialize_registers_persistence(context):

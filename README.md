@@ -13,6 +13,12 @@ preview of the complete input before you save.
   - the structure already open in the **CIF Viewer** plugin panel, copied across
     without re-reading the file
 - **Supercells** — independent a/b/c repeats applied to any source
+- **Surface slab builder** — cut any (hkl) surface from a bulk structure: layers,
+  vacuum thickness, a termination shift that slides the cut window through the
+  cell, and an option to put **c** along the surface normal. Hexagonal
+  Miller-Bravais indices `(hkil)` are accepted and folded to `(hkl)`
+- **Vacuum per axis** — pad one axis only (the usual slab setup) instead of a
+  uniform box
 - **All pw.x run types** — `scf`, `nscf`, `bands`, `relax`, `vc-relax`, `md`,
   `vc-md`, with `&IONS` and `&CELL` written only when the run type needs them
 - **&SYSTEM control** — `ecutwfc` with an automatic `ecutrho = 8 x ecutwfc`,
@@ -23,9 +29,19 @@ preview of the complete input before you save.
   `diagonalization`
 - **K_POINTS** — `gamma`, an automatic mesh with shifts, or a mesh derived from a
   target reciprocal-space spacing
-- **ATOMIC_SPECIES** — IUPAC masses and UPF filenames from an editable pattern
-  (`{El}` / `{el}` / `{EL}` placeholders, with common library conventions preset)
+- **ATOMIC_SPECIES** — IUPAC masses plus UPF filenames resolved by **scanning your
+  pseudopotential folder**, with a one-click copy into `pseudo_dir`; elements with
+  no file fall back to an editable filename pattern (`{El}` / `{el}` / `{EL}`)
+- **Surface energy** (Analysis menu) — load a bulk and a slab `pw.x` output and get
+  `E_surf = (E_slab - N_slab E_bulk / N_bulk) / 2A` in eV/Å² and J/m², with the
+  area taken from the slab in the generator
+- **nbnd, tot_charge** — including reading the charge and open-shell state straight
+  from the molecule
 - Coordinates written as `crystal` or `angstrom`, always grouped by species
+
+- **Checks** — a warning strip flags the classic mistakes: a molecule sampled
+  with a dense k-mesh, k-points across a slab's vacuum, too little vacuum,
+  cut-offs that are too low, a relaxation with zero steps, and charged cells
 
 ## Install
 
@@ -66,4 +82,4 @@ python -m pytest tests/ -v
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE).

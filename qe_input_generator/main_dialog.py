@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -15,10 +16,12 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -46,6 +49,8 @@ class QeInputDialog(QDialog):
         self.mark_modified = mark_modified
         self._updating = False
         self._cell = None
+        self._get_molecule = get_molecule
+        self._pseudo_files = {}
 
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -69,6 +74,13 @@ class QeInputDialog(QDialog):
         self.preview.setReadOnly(True)
         self.preview.setFont(QFont("Courier New", 9))
         self.tabs.addTab(self.preview, "Preview")
+
+        self.warning_label = QLabel()
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setTextFormat(Qt.TextFormat.RichText)
+        self.warning_label.setStyleSheet("QLabel { color: #b36b00; }")
+        self.warning_label.setVisible(False)
+        layout.addWidget(self.warning_label)
 
         buttons = QDialogButtonBox()
         self.save_button = buttons.addButton("Save Input...", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -117,6 +129,27 @@ class QeInputDialog(QDialog):
         form.addRow("UPF pattern:", self.pseudo_pattern_combo)
         hint = QLabel("{El} = Si, {el} = si, {EL} = SI")
         form.addRow("", hint)
+
+        search_row = QWidget()
+        search_layout = QHBoxLayout(search_row)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        self.pseudo_search_edit = QLineEdit()
+        self.pseudo_search_edit.setPlaceholderText("Folder holding your .UPF files")
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self._browse_pseudo_folder)
+        scan_button = QPushButton("Scan")
+        scan_button.clicked.connect(self.scan_pseudo_folder)
+        self.copy_button_pseudo = QPushButton("Copy into pseudo_dir")
+        self.copy_button_pseudo.clicked.connect(self.copy_pseudos)
+        search_layout.addWidget(self.pseudo_search_edit, 1)
+        search_layout.addWidget(browse_button)
+        search_layout.addWidget(scan_button)
+        search_layout.addWidget(self.copy_button_pseudo)
+        form.addRow("UPF folder:", search_row)
+
+        self.pseudo_status_label = QLabel("Not scanned - the pattern above is used.")
+        self.pseudo_status_label.setWordWrap(True)
+        form.addRow("", self.pseudo_status_label)
         self.tprnfor_check = QCheckBox("tprnfor (print forces)")
         self.tstress_check = QCheckBox("tstress (print stress)")
         form.addRow("", self.tprnfor_check)
@@ -205,6 +238,17 @@ class QeInputDialog(QDialog):
         self.vdw_combo = QComboBox()
         self.vdw_combo.addItems(writer.VDW_OPTIONS)
         form.addRow("vdw_corr:", self.vdw_combo)
+        self.nbnd_spin = QSpinBox()
+        self.nbnd_spin.setRange(0, 100000)
+        self.nbnd_spin.setSpecialValueText("auto")
+        form.addRow("nbnd:", self.nbnd_spin)
+        self.charge_spin = QDoubleSpinBox()
+        self.charge_spin.setRange(-20.0, 20.0)
+        self.charge_spin.setSingleStep(1.0)
+        self.charge_spin.setDecimals(2)
+        form.addRow("tot_charge:", self.charge_spin)
+        self.auto_charge_check = QCheckBox("Read the charge from the molecule")
+        form.addRow("", self.auto_charge_check)
         outer.addWidget(box)
 
         elec_box = QGroupBox("&ELECTRONS")
@@ -246,8 +290,11 @@ class QeInputDialog(QDialog):
             self.degauss_spin,
             self.magnetization_spin,
             self.mixing_spin,
+            self.charge_spin,
         ):
             widget.valueChanged.connect(self.update_preview)
+        self.nbnd_spin.valueChanged.connect(self.update_preview)
+        self.auto_charge_check.toggled.connect(self.update_preview)
         self.maxstep_spin.valueChanged.connect(self.update_preview)
         for widget in (self.ecutrho_auto_check, self.nspin_check):
             widget.toggled.connect(self.update_preview)
@@ -286,6 +333,9 @@ class QeInputDialog(QDialog):
         self.kspacing_spin.setSingleStep(0.005)
         self.kspacing_spin.setSuffix(" 1/A")
         form.addRow("Automatic spacing:", self.kspacing_spin)
+        self.slab_kpoint_check = QCheckBox("For a slab, force the third k-point to 1")
+        self.slab_kpoint_check.setChecked(True)
+        form.addRow("", self.slab_kpoint_check)
         outer.addWidget(box)
 
         hint = QLabel(
@@ -302,6 +352,7 @@ class QeInputDialog(QDialog):
         for check in self.kshift_checks:
             check.toggled.connect(self.update_preview)
         self.kspacing_spin.valueChanged.connect(self.update_preview)
+        self.slab_kpoint_check.toggled.connect(self.update_preview)
         return tab
 
     # -- settings ---------------------------------------------------------
@@ -349,6 +400,12 @@ class QeInputDialog(QDialog):
             for check, value in zip(self.kshift_checks, settings.get("kshift", [0, 0, 0])):
                 check.setChecked(bool(value))
             self.kspacing_spin.setValue(float(settings.get("kspacing", 0.03)))
+            self.slab_kpoint_check.setChecked(bool(settings.get("slab_kpoints_c1", True)))
+            self.nbnd_spin.setValue(int(settings.get("nbnd", 0) or 0))
+            self.charge_spin.setValue(float(settings.get("tot_charge", 0.0) or 0.0))
+            self.auto_charge_check.setChecked(bool(settings.get("auto_charge", False)))
+            self.pseudo_search_edit.setText(str(settings.get("pseudo_search_dir", "") or ""))
+            self._pseudo_files = dict(settings.get("pseudo_files") or {})
             self.units_combo.setCurrentText(
                 settings.get("position_units", writer.POSITION_UNITS[0])
             )
@@ -392,6 +449,12 @@ class QeInputDialog(QDialog):
             "kmesh": [spin.value() for spin in self.kmesh_spins],
             "kshift": [1 if check.isChecked() else 0 for check in self.kshift_checks],
             "kspacing": self.kspacing_spin.value(),
+            "slab_kpoints_c1": self.slab_kpoint_check.isChecked(),
+            "nbnd": self.nbnd_spin.value(),
+            "tot_charge": self.charge_spin.value(),
+            "auto_charge": self.auto_charge_check.isChecked(),
+            "pseudo_search_dir": self.pseudo_search_edit.text(),
+            "pseudo_files": dict(self._pseudo_files),
             "position_units": self.units_combo.currentText(),
         }
         settings.update(self.structure_panel.read_settings())
@@ -402,6 +465,7 @@ class QeInputDialog(QDialog):
     def update_preview(self, *_args) -> None:
         if self._updating:
             return
+        self._apply_auto_charge()
         settings = self.read_settings()
         self.persistent_settings.update(settings)
         if self.mark_modified is not None:
@@ -421,12 +485,95 @@ class QeInputDialog(QDialog):
             self._cell = None
             self.structure_panel.refresh_summary(error=str(exc))
             self.preview.setPlainText(f"! {exc}")
+            self._show_warnings([])
             self.save_button.setEnabled(False)
             return
 
         self.structure_panel.refresh_summary(self._cell)
         self.preview.setPlainText(writer.build_input(self._cell, settings))
+        self._show_warnings(writer.validate(self._cell, settings))
         self.save_button.setEnabled(True)
+
+    def _apply_auto_charge(self) -> None:
+        if not self.auto_charge_check.isChecked() or self._get_molecule is None:
+            return
+        from .cell_model import molecule_charge_and_multiplicity
+
+        try:
+            charge, multiplicity = molecule_charge_and_multiplicity(self._get_molecule())
+        except (ValueError, AttributeError, TypeError):
+            return
+        blocked = self._updating
+        self._updating = True
+        try:
+            self.charge_spin.setValue(float(charge))
+            # An open shell needs spin polarisation to be meaningful.
+            if multiplicity > 1 and not self.nspin_check.isChecked():
+                self.nspin_check.setChecked(True)
+        finally:
+            self._updating = blocked
+
+    def _browse_pseudo_folder(self) -> None:  # pragma: no cover - file dialog
+        folder = QFileDialog.getExistingDirectory(
+            self, "Choose the folder holding your UPF files", self.pseudo_search_edit.text()
+        )
+        if folder:
+            self.pseudo_search_edit.setText(folder)
+            self.scan_pseudo_folder()
+
+    def scan_pseudo_folder(self) -> None:
+        from . import pseudos
+
+        folder = self.pseudo_search_edit.text().strip()
+        if self._cell is None:
+            self.pseudo_status_label.setText("Load a structure first.")
+            return
+        elements = [element for element, _ in writer.sorted_by_species(self._cell)[1]]
+        chosen, missing = pseudos.match_elements(elements, folder)
+        self._pseudo_files = chosen
+        if not folder:
+            self.pseudo_status_label.setText("Choose a folder to scan for UPF files.")
+        elif chosen:
+            found = ", ".join(f"{element} -> {name}" for element, name in chosen.items())
+            note = f"  |  not found: {', '.join(missing)}" if missing else ""
+            self.pseudo_status_label.setText(found + note)
+        else:
+            self.pseudo_status_label.setText(
+                f"No UPF file matched {', '.join(elements)} in that folder."
+            )
+        self.update_preview()
+
+    def copy_pseudos(self) -> None:
+        from . import pseudos
+
+        if not self._pseudo_files:
+            QMessageBox.information(
+                self,
+                "Quantum ESPRESSO Input Generator",
+                "Scan a UPF folder first so there is something to copy.",
+            )
+            return
+        source = self.pseudo_search_edit.text().strip()
+        destination = self.pseudo_dir_edit.text().strip() or "./pseudo"
+        try:
+            copied = pseudos.copy_into(self._pseudo_files, source, destination)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Quantum ESPRESSO Input Generator", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Quantum ESPRESSO Input Generator",
+            f"Copied {len(copied)} pseudopotential file(s) into\n{os.path.abspath(destination)}",
+        )
+
+    def _show_warnings(self, messages) -> None:
+        if not messages:
+            self.warning_label.setVisible(False)
+            self.warning_label.clear()
+            return
+        items = "".join(f"<li>{message}</li>" for message in messages)
+        self.warning_label.setText(f"<b>Check:</b><ul>{items}</ul>")
+        self.warning_label.setVisible(True)
 
     def copy_preview(self) -> None:
         from PyQt6.QtWidgets import QApplication

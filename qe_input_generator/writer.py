@@ -47,6 +47,11 @@ def default_settings() -> Dict:
         "outdir": "./out",
         "pseudo_dir": "./pseudo",
         "pseudo_pattern": PSEUDO_PATTERNS[0],
+        "pseudo_search_dir": "",
+        "pseudo_files": {},
+        "nbnd": 0,
+        "tot_charge": 0.0,
+        "slab_kpoints_c1": True,
         "functional": FUNCTIONALS[0],
         "ecutwfc": 60.0,
         "ecutrho_auto": True,
@@ -173,6 +178,10 @@ def build_system(cell: Cell, settings: Dict) -> str:
         entries.append(("smearing", str(settings.get("smearing", SMEARING[0])).split()[0]))
         entries.append(("degauss", float(settings.get("degauss", 0.01))))
 
+    charge = float(settings.get("tot_charge", 0.0) or 0.0)
+    if abs(charge) > 1e-12:
+        entries.append(("tot_charge", charge))
+
     functional = settings.get("functional", FUNCTIONALS[0])
     if functional != FUNCTIONALS[0]:
         entries.append(("input_dft", functional))
@@ -180,6 +189,10 @@ def build_system(cell: Cell, settings: Dict) -> str:
     vdw = settings.get("vdw", "None")
     if vdw and vdw != "None":
         entries.append(("vdw_corr", vdw))
+
+    nbnd = int(settings.get("nbnd", 0) or 0)
+    if nbnd > 0:
+        entries.append(("nbnd", nbnd))
 
     if settings.get("nspin"):
         entries.append(("nspin", 2))
@@ -233,11 +246,12 @@ def build_cell_namelist(settings: Dict) -> str:
 def build_atomic_species(cell: Cell, settings: Dict) -> str:
     _, counts = sorted_by_species(cell)
     pattern = settings.get("pseudo_pattern", PSEUDO_PATTERNS[0])
+    resolved = settings.get("pseudo_files") or {}
     lines = ["ATOMIC_SPECIES"]
     for element, _ in counts:
-        lines.append(
-            f"  {element:<3} {atomic_mass(element):>10.4f}  {pseudo_filename(element, pattern)}"
-        )
+        # A filename found on disk always beats the guessed pattern.
+        filename = resolved.get(element) or pseudo_filename(element, pattern)
+        lines.append(f"  {element:<3} {atomic_mass(element):>10.4f}  {filename}")
     return "\n".join(lines)
 
 
@@ -262,16 +276,32 @@ def build_atomic_positions(cell: Cell, settings: Dict) -> str:
     return "\n".join(lines)
 
 
+def effective_mesh(cell: Cell, settings: Dict) -> Tuple[int, int, int]:
+    """Mesh actually written, including the slab rule."""
+    mode = settings.get("kpoint_mode", KPOINT_MODES[1])
+    if mode == "Gamma point only":
+        return (1, 1, 1)
+    if mode == "Automatic (spacing)":
+        mesh = list(kpoint_mesh_from_density(cell, float(settings.get("kspacing", 0.03))))
+    else:
+        mesh = [max(1, int(value)) for value in settings.get("kmesh", [4, 4, 4])]
+    # Sampling across the vacuum of a slab buys nothing but cost.
+    if cell.source == "slab" and settings.get("slab_kpoints_c1", True):
+        mesh[2] = 1
+    return tuple(mesh)
+
+
 def build_kpoints(cell: Cell, settings: Dict) -> str:
     mode = settings.get("kpoint_mode", KPOINT_MODES[1])
     if mode == "Gamma point only":
         return "K_POINTS gamma"
+    mesh = effective_mesh(cell, settings)
     if mode == "Automatic (spacing)":
-        mesh = kpoint_mesh_from_density(cell, float(settings.get("kspacing", 0.03)))
         shift = (0, 0, 0)
     else:
-        mesh = tuple(max(1, int(value)) for value in settings.get("kmesh", [4, 4, 4]))
         shift = tuple(1 if int(value) else 0 for value in settings.get("kshift", [0, 0, 0]))
+        if cell.source == "slab" and settings.get("slab_kpoints_c1", True):
+            shift = (shift[0], shift[1], 0)
     return (
         "K_POINTS automatic\n"
         f"  {mesh[0]:d} {mesh[1]:d} {mesh[2]:d}  {shift[0]:d} {shift[1]:d} {shift[2]:d}"
@@ -307,3 +337,82 @@ def suggested_filename(settings: Optional[Dict] = None) -> str:
     settings = {**default_settings(), **(settings or {})}
     prefix = str(settings.get("prefix") or "pwscf").strip() or "pwscf"
     return f"{prefix}.{settings.get('calculation', 'scf')}.in"
+
+
+# --------------------------------------------------------------------------
+# validation
+# --------------------------------------------------------------------------
+
+
+def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
+    """Warnings about setups that run but give wrong or wasteful answers."""
+    settings = {**default_settings(), **(settings or {})}
+    messages: List[str] = []
+
+    mesh = effective_mesh(cell, settings)
+    mode = settings.get("kpoint_mode", KPOINT_MODES[1])
+
+    if cell.source == "molecule" and (mode != "Gamma point only" and max(mesh) > 1):
+        messages.append(
+            f"An isolated molecule in a box is being sampled with a {mesh[0]}x{mesh[1]}x{mesh[2]} "
+            "mesh — K_POINTS gamma is enough and uses the faster gamma-only algorithms."
+        )
+    if cell.source == "slab" and mesh[2] > 1:
+        messages.append(
+            "The slab is sampled along the vacuum direction; set the third k-point to 1."
+        )
+
+    ecutwfc = float(settings.get("ecutwfc", 60.0))
+    ecutrho = ecutwfc * 8.0 if settings.get("ecutrho_auto", True) else float(settings.get("ecutrho", 480.0))
+    if ecutrho < 4.0 * ecutwfc - 1e-9:
+        messages.append(
+            f"ecutrho ({ecutrho:g}) is below 4x ecutwfc — that is only valid for norm-conserving "
+            "pseudopotentials; ultrasoft and PAW sets need 8-12x."
+        )
+    if ecutwfc < 25.0:
+        messages.append(f"ecutwfc = {ecutwfc:g} Ry is low for most pseudopotentials; converge it first.")
+
+    calculation = settings.get("calculation", "scf")
+    if calculation in ("nscf", "bands"):
+        messages.append(
+            f"A '{calculation}' run reads the charge density from a previous scf run — keep the "
+            "same prefix and outdir, and do not delete the .save directory."
+        )
+    if calculation in ("vc-relax", "vc-md") and ecutwfc < 60.0:
+        messages.append(
+            "Variable-cell runs suffer Pulay stress — raise ecutwfc (and re-run at the final "
+            "cell) before trusting the optimised volume."
+        )
+
+    if settings.get("occupations") == "fixed" and cell.source == "slab":
+        messages.append(
+            "Fixed occupations rarely converge for a metallic slab; smearing is the usual choice."
+        )
+    if settings.get("occupations") in ("tetrahedra", "tetrahedra_opt") and calculation != "nscf":
+        messages.append(
+            "The tetrahedron occupations are meant for a DOS-style nscf run; use smearing for scf."
+        )
+
+    if abs(float(settings.get("tot_charge", 0.0) or 0.0)) > 1e-12 and cell.source == "molecule":
+        messages.append(
+            "A charged molecule in a periodic box interacts with its own images — consider "
+            "assume_isolated = 'makov-payne' (or 'martyna-tuckerman') in the extra keywords."
+        )
+
+    missing = missing_pseudos(cell, settings)
+    if missing:
+        messages.append(
+            "No pseudopotential file was matched for: " + ", ".join(missing) +
+            " — the written name is a guess from the pattern."
+        )
+
+    return messages
+
+
+def missing_pseudos(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
+    """Elements with no resolved UPF filename (pattern guess is used instead)."""
+    settings = {**default_settings(), **(settings or {})}
+    resolved = settings.get("pseudo_files") or {}
+    if not resolved:
+        return []
+    return [element for element, _ in sorted_by_species(cell)[1] if element not in resolved]
