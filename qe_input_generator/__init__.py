@@ -4,7 +4,7 @@ import logging
 import os
 
 PLUGIN_NAME = "Quantum ESPRESSO Input Generator"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.3.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate Quantum ESPRESSO pw.x inputs from the current molecule "
@@ -18,7 +18,6 @@ PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
 
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 WINDOW_ID = "qe_input_generator_dialog"
-SURFACE_WINDOW_ID = "qe_surface_energy_dialog"
 
 _context = None
 _dialog_opened = False
@@ -88,32 +87,7 @@ def initialize(context):
     def show_dialog():
         run(context.get_main_window())
 
-    def show_surface_energy():
-        from .surface_dialog import SurfaceEnergyDialog
-
-        mw = context.get_main_window()
-        existing = context.get_window(SURFACE_WINDOW_ID)
-        if existing is not None and existing.isVisible():
-            existing.raise_()
-            existing.activateWindow()
-            return
-
-        def _area():
-            # Reuse the slab the generator is showing, if it has one.
-            generator = context.get_window(WINDOW_ID)
-            cell = getattr(generator, "_cell", None) if generator is not None else None
-            if cell is None:
-                return None
-            from .cell_model import surface_area
-
-            return surface_area(cell)
-
-        dlg = SurfaceEnergyDialog(parent=mw, get_area=_area)
-        context.register_window(SURFACE_WINDOW_ID, dlg)
-        dlg.show()
-
     context.add_export_action("Quantum ESPRESSO Input (pw.x)...", show_dialog)
-    context.add_analysis_tool("Surface Energy (QE)...", show_surface_energy)
 
     def save_state():
         if not _dialog_opened:

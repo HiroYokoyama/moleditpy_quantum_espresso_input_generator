@@ -32,9 +32,6 @@ preview of the complete input before you save.
 - **ATOMIC_SPECIES** — IUPAC masses plus UPF filenames resolved by **scanning your
   pseudopotential folder**, with a one-click copy into `pseudo_dir`; elements with
   no file fall back to an editable filename pattern (`{El}` / `{el}` / `{EL}`)
-- **Surface energy** (Analysis menu) — load a bulk and a slab `pw.x` output and get
-  `E_surf = (E_slab - N_slab E_bulk / N_bulk) / 2A` in eV/Å² and J/m², with the
-  area taken from the slab in the generator
 - **nbnd, tot_charge** — including reading the charge and open-shell state straight
   from the molecule
 - Coordinates written as `crystal` or `angstrom`, always grouped by species
