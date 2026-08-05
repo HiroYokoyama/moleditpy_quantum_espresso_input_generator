@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-from .cell_model import Cell, kpoint_mesh_from_density, sorted_by_species
+from .cell_model import Cell, kpoint_mesh_from_density, looks_like_slab, sorted_by_species
 from .elements import atomic_mass
 
 CALCULATIONS = ("scf", "nscf", "bands", "relax", "vc-relax", "md", "vc-md")
@@ -286,7 +286,7 @@ def effective_mesh(cell: Cell, settings: Dict) -> Tuple[int, int, int]:
     else:
         mesh = [max(1, int(value)) for value in settings.get("kmesh", [4, 4, 4])]
     # Sampling across the vacuum of a slab buys nothing but cost.
-    if cell.source == "slab" and settings.get("slab_kpoints_c1", True):
+    if looks_like_slab(cell) and settings.get("slab_kpoints_c1", True):
         mesh[2] = 1
     return tuple(mesh)
 
@@ -300,7 +300,7 @@ def build_kpoints(cell: Cell, settings: Dict) -> str:
         shift = (0, 0, 0)
     else:
         shift = tuple(1 if int(value) else 0 for value in settings.get("kshift", [0, 0, 0]))
-        if cell.source == "slab" and settings.get("slab_kpoints_c1", True):
+        if looks_like_slab(cell) and settings.get("slab_kpoints_c1", True):
             shift = (shift[0], shift[1], 0)
     return (
         "K_POINTS automatic\n"
@@ -357,7 +357,7 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
             f"An isolated molecule in a box is being sampled with a {mesh[0]}x{mesh[1]}x{mesh[2]} "
             "mesh — K_POINTS gamma is enough and uses the faster gamma-only algorithms."
         )
-    if cell.source == "slab" and mesh[2] > 1:
+    if looks_like_slab(cell) and mesh[2] > 1:
         messages.append(
             "The slab is sampled along the vacuum direction; set the third k-point to 1."
         )
@@ -384,7 +384,7 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
             "cell) before trusting the optimised volume."
         )
 
-    if settings.get("occupations") == "fixed" and cell.source == "slab":
+    if settings.get("occupations") == "fixed" and looks_like_slab(cell):
         messages.append(
             "Fixed occupations rarely converge for a metallic slab; smearing is the usual choice."
         )
