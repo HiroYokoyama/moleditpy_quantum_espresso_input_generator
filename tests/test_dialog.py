@@ -152,3 +152,16 @@ def test_dialog_writes_assume_isolated(dialog):
 
 def test_dialog_omits_assume_isolated_by_default(dialog):
     assert "assume_isolated" not in dialog.preview.toPlainText()
+
+
+def test_the_dialog_accepts_a_dropped_cif(dialog, tmp_path):
+    """The drop must work anywhere on the window, not only over the panel."""
+    from test_structure_panel import _FakeDropEvent, _FakeMime
+
+    path = tmp_path / "dropped.cif"
+    path.write_text("data_x\n", encoding="utf-8")
+    assert dialog.acceptDrops()
+    event = _FakeDropEvent(_FakeMime([str(path)]))
+    dialog.dropEvent(event)
+    assert event.accepted
+    assert dialog.structure_panel.cif_edit.text() == str(path)
