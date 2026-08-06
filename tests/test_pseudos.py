@@ -117,3 +117,10 @@ def test_resolved_filenames_win_over_the_pattern():
     text = writer.build_input(cell, {"pseudo_files": {"Si": "Si_found_on_disk.UPF"}})
     assert "Si_found_on_disk.UPF" in text
     assert "O.UPF" in text  # O falls back to the pattern
+
+
+def test_scan_ignores_a_directory_named_like_a_upf(tmp_path):
+    """A folder called Si.UPF is not a pseudopotential."""
+    (tmp_path / "Si.UPF").mkdir()
+    (tmp_path / "O.UPF").write_text("", encoding="utf-8")
+    assert sorted(pseudos.scan_folder(str(tmp_path))) == ["O"]

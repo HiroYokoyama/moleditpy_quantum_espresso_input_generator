@@ -372,3 +372,7 @@ def test_crystal_positions_round_trip_through_the_lattice(water_cell):
         assert list(cm.fractional_to_cartesian(fract, water_cell.lattice)) == pytest.approx(
             list(atom.cart)
         )
+
+
+def test_build_preview_matches_build_input(water_cell):
+    assert writer.build_preview(water_cell) == writer.build_input(water_cell)
