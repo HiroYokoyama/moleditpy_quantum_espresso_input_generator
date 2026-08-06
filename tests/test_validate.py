@@ -215,3 +215,21 @@ def test_martyna_tuckerman_reminds_about_the_box_size(molecule_cell):
         )
     )
     assert "twice the size" in messages
+
+
+def test_spin_polarisation_with_zero_moment_is_flagged(bulk_cell):
+    messages = joined(
+        writer.validate(bulk_cell, {"nspin": True, "starting_magnetization": 0.0, "kmesh": [8, 8, 8]})
+    )
+    assert "non-magnetic" in messages
+
+
+def test_spin_polarisation_with_a_moment_is_not_flagged(bulk_cell):
+    messages = joined(
+        writer.validate(bulk_cell, {"nspin": True, "starting_magnetization": 0.5, "kmesh": [8, 8, 8]})
+    )
+    assert "non-magnetic" not in messages
+
+
+def test_scan_warns_about_libxc(bulk_cell):
+    assert "libxc" in joined(writer.validate(bulk_cell, {"functional": "SCAN", "kmesh": [8, 8, 8]}))

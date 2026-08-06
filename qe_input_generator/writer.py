@@ -423,6 +423,18 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
             "The tetrahedron occupations are meant for a DOS-style nscf run; use smearing for scf."
         )
 
+    if settings.get("nspin") and abs(float(settings.get("starting_magnetization", 0.5))) < 1e-9:
+        messages.append(
+            "nspin = 2 with starting_magnetization = 0 falls straight back to the non-magnetic "
+            "solution; the manual requires a nonzero starting value if you expect a magnetic "
+            "ground state."
+        )
+    if settings.get("functional") == "SCAN":
+        messages.append(
+            "input_dft = 'SCAN' needs a pw.x built against libxc; a stock build stops with an "
+            "unrecognised-functional error."
+        )
+
     isolated = assume_isolated_keyword(settings)
     if abs(float(settings.get("tot_charge", 0.0) or 0.0)) > 1e-12 and cell.source == "molecule" and not isolated:
         messages.append(
