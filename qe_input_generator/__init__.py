@@ -4,7 +4,7 @@ import logging
 import os
 
 PLUGIN_NAME = "Quantum ESPRESSO Input Generator"
-PLUGIN_VERSION = "0.6.1"
+PLUGIN_VERSION = "0.6.2"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate Quantum ESPRESSO pw.x inputs from the current molecule "
