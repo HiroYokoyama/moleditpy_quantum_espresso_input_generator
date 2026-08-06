@@ -319,3 +319,56 @@ def test_default_settings_are_independent_copies():
     first = writer.default_settings()
     first["ecutwfc"] = 1.0
     assert writer.default_settings()["ecutwfc"] == 60.0
+
+
+# -- Fortran string quoting -------------------------------------------------
+
+
+def test_a_title_with_an_apostrophe_stays_inside_its_string():
+    """Fortran closes a quoted string on a bare ' — it must be doubled."""
+    text = writer.build_input(
+        cm.cell_from_molecule(["H"], [[0.0, 0.0, 0.0]]),
+        {"title": "Hiro's cell", "prefix": "o'brien"},
+    )
+    control = namelist(text, "CONTROL")
+    assert control["title"] == "'Hiro''s cell'"
+    assert control["prefix"] == "'o''brien'"
+
+
+# -- assume_isolated --------------------------------------------------------
+
+
+def test_assume_isolated_is_absent_by_default(water_cell):
+    assert "assume_isolated" not in writer.build_input(water_cell)
+
+
+def test_assume_isolated_is_written_when_chosen(water_cell):
+    text = writer.build_input(water_cell, {"assume_isolated": "makov-payne"})
+    assert namelist(text, "SYSTEM")["assume_isolated"] == "'makov-payne'"
+
+
+def test_assume_isolated_keyword_maps_the_none_label():
+    assert writer.assume_isolated_keyword({"assume_isolated": writer.ASSUME_ISOLATED[0]}) == ""
+    assert writer.assume_isolated_keyword({"assume_isolated": "2D"}) == "2D"
+
+
+# -- cell block -------------------------------------------------------------
+
+
+def test_cell_parameters_are_the_lattice_rows(water_cell):
+    lines = writer.build_cell_parameters(water_cell).splitlines()
+    assert lines[0] == "CELL_PARAMETERS angstrom"
+    for index, row in enumerate(water_cell.lattice):
+        assert [float(value) for value in lines[index + 1].split()] == pytest.approx(list(row))
+
+
+def test_crystal_positions_round_trip_through_the_lattice(water_cell):
+    """ATOMIC_POSITIONS crystal must be fractions of CELL_PARAMETERS."""
+    text = writer.build_input(water_cell, {"position_units": "crystal (fractional)"})
+    block = text.split("ATOMIC_POSITIONS crystal\n")[1].splitlines()[: len(water_cell.atoms)]
+    atoms, _ = writer.sorted_by_species(water_cell)
+    for line, atom in zip(block, atoms):
+        fract = [float(value) for value in line.split()[1:4]]
+        assert list(cm.fractional_to_cartesian(fract, water_cell.lattice)) == pytest.approx(
+            list(atom.cart)
+        )

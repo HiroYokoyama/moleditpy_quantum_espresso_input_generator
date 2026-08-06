@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-from .cell_model import Cell, kpoint_mesh_from_density, looks_like_slab, sorted_by_species
+from .cell_model import (
+    Cell,
+    kpoint_mesh_from_density,
+    looks_like_slab,
+    sorted_by_species,
+    structure_warnings,
+)
 from .elements import atomic_mass
 
 CALCULATIONS = ("scf", "nscf", "bands", "relax", "vc-relax", "md", "vc-md")
@@ -28,6 +34,14 @@ VDW_OPTIONS = ("None", "grimme-d2", "grimme-d3", "xdm", "ts-vdw")
 DIAGONALIZATION = ("david", "cg", "ppcg", "paro", "rmm-davidson")
 
 KPOINT_MODES = ("Gamma point only", "Automatic mesh", "Automatic (spacing)")
+
+ASSUME_ISOLATED = (
+    "none (fully periodic)",
+    "makov-payne",
+    "martyna-tuckerman",
+    "esm",
+    "2D",
+)
 
 POSITION_UNITS = ("crystal (fractional)", "angstrom")
 
@@ -62,6 +76,7 @@ def default_settings() -> Dict:
         "nspin": False,
         "starting_magnetization": 0.5,
         "vdw": VDW_OPTIONS[0],
+        "assume_isolated": ASSUME_ISOLATED[0],
         "conv_thr": 1e-8,
         "mixing_beta": 0.7,
         "electron_maxstep": 200,
@@ -100,7 +115,9 @@ def _fortran(value) -> str:
         return f"{value:g}"
     if isinstance(value, int):
         return str(value)
-    return f"'{value}'"
+    # Fortran escapes a quote inside a quoted string by doubling it; a title or
+    # path holding an apostrophe would otherwise close the string early.
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def _namelist(name: str, entries: List[Tuple[str, object]], extra: str = "") -> str:
@@ -123,6 +140,14 @@ def pseudo_filename(element: str, pattern: str) -> str:
         .replace("{el}", element.lower())
         .replace("{EL}", element.upper())
     )
+
+
+def assume_isolated_keyword(settings: Dict) -> str:
+    """The pw.x value, or "" for the fully periodic default."""
+    choice = str(settings.get("assume_isolated", ASSUME_ISOLATED[0]) or "").strip()
+    if not choice or choice.startswith("none"):
+        return ""
+    return choice
 
 
 def _needs_ions(calculation: str) -> bool:
@@ -189,6 +214,10 @@ def build_system(cell: Cell, settings: Dict) -> str:
     vdw = settings.get("vdw", "None")
     if vdw and vdw != "None":
         entries.append(("vdw_corr", vdw))
+
+    isolated = assume_isolated_keyword(settings)
+    if isolated:
+        entries.append(("assume_isolated", isolated))
 
     nbnd = int(settings.get("nbnd", 0) or 0)
     if nbnd > 0:
@@ -347,7 +376,8 @@ def suggested_filename(settings: Optional[Dict] = None) -> str:
 def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
     """Warnings about setups that run but give wrong or wasteful answers."""
     settings = {**default_settings(), **(settings or {})}
-    messages: List[str] = []
+    # A broken structure outranks every keyword warning below it.
+    messages: List[str] = list(structure_warnings(cell))
 
     mesh = effective_mesh(cell, settings)
     mode = settings.get("kpoint_mode", KPOINT_MODES[1])
@@ -393,10 +423,26 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
             "The tetrahedron occupations are meant for a DOS-style nscf run; use smearing for scf."
         )
 
-    if abs(float(settings.get("tot_charge", 0.0) or 0.0)) > 1e-12 and cell.source == "molecule":
+    isolated = assume_isolated_keyword(settings)
+    if abs(float(settings.get("tot_charge", 0.0) or 0.0)) > 1e-12 and cell.source == "molecule" and not isolated:
         messages.append(
-            "A charged molecule in a periodic box interacts with its own images — consider "
-            "assume_isolated = 'makov-payne' (or 'martyna-tuckerman') in the extra keywords."
+            "A charged molecule in a periodic box interacts with its own images — set "
+            "assume_isolated to makov-payne (or martyna-tuckerman) to correct for it."
+        )
+    if isolated in ("makov-payne", "martyna-tuckerman") and cell.source != "molecule":
+        messages.append(
+            f"assume_isolated = '{isolated}' treats the cell as an isolated cluster; it is "
+            "wrong for an extended crystal or a slab."
+        )
+    if isolated == "martyna-tuckerman" and cell.source == "molecule":
+        messages.append(
+            "martyna-tuckerman needs a box roughly twice the size of the molecule in every "
+            "direction — check the vacuum padding on the Structure tab."
+        )
+    if isolated in ("2D", "esm") and not looks_like_slab(cell):
+        messages.append(
+            f"assume_isolated = '{isolated}' expects a slab with vacuum along c; this cell "
+            "does not look like one."
         )
 
     missing = missing_pseudos(cell, settings)

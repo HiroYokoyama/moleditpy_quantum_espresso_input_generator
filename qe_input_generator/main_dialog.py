@@ -238,6 +238,13 @@ class QeInputDialog(QDialog):
         self.vdw_combo = QComboBox()
         self.vdw_combo.addItems(writer.VDW_OPTIONS)
         form.addRow("vdw_corr:", self.vdw_combo)
+        self.isolated_combo = QComboBox()
+        self.isolated_combo.addItems(writer.ASSUME_ISOLATED)
+        self.isolated_combo.setToolTip(
+            "Removes the interaction between periodic images: makov-payne or "
+            "martyna-tuckerman for a molecule, 2D or esm for a slab."
+        )
+        form.addRow("assume_isolated:", self.isolated_combo)
         self.nbnd_spin = QSpinBox()
         self.nbnd_spin.setRange(0, 100000)
         self.nbnd_spin.setSpecialValueText("auto")
@@ -281,6 +288,7 @@ class QeInputDialog(QDialog):
             self.occupations_combo,
             self.smearing_combo,
             self.vdw_combo,
+            self.isolated_combo,
             self.diag_combo,
         ):
             widget.currentTextChanged.connect(self.update_preview)
@@ -388,6 +396,9 @@ class QeInputDialog(QDialog):
             self.nspin_check.setChecked(bool(settings.get("nspin")))
             self.magnetization_spin.setValue(float(settings.get("starting_magnetization", 0.5)))
             self.vdw_combo.setCurrentText(settings.get("vdw", writer.VDW_OPTIONS[0]))
+            self.isolated_combo.setCurrentText(
+                settings.get("assume_isolated", writer.ASSUME_ISOLATED[0])
+            )
             self.conv_thr_edit.setText(str(settings.get("conv_thr", 1e-8)))
             self.mixing_spin.setValue(float(settings.get("mixing_beta", 0.7)))
             self.maxstep_spin.setValue(int(settings.get("electron_maxstep", 200)))
@@ -440,6 +451,7 @@ class QeInputDialog(QDialog):
             "nspin": self.nspin_check.isChecked(),
             "starting_magnetization": self.magnetization_spin.value(),
             "vdw": self.vdw_combo.currentText(),
+            "assume_isolated": self.isolated_combo.currentText(),
             "conv_thr": _to_float(self.conv_thr_edit.text(), 1e-8),
             "mixing_beta": self.mixing_spin.value(),
             "electron_maxstep": self.maxstep_spin.value(),

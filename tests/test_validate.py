@@ -143,3 +143,75 @@ def test_nbnd_and_charge_reach_the_input(bulk_cell):
 
 def test_nbnd_zero_is_omitted(bulk_cell):
     assert "nbnd" not in writer.build_input(bulk_cell, {"nbnd": 0})
+
+
+# -- structure faults reach the QE warnings ---------------------------------
+
+
+def test_a_partially_occupied_cif_is_flagged(bulk_cell):
+    disordered = cm.Cell(
+        bulk_cell.name,
+        bulk_cell.lengths,
+        bulk_cell.angles,
+        bulk_cell.lattice,
+        (cm.CellAtom("Fe1", "Fe", np.zeros(3), np.zeros(3), 0.5),),
+        source="cif",
+    )
+    assert "partially occupied" in joined(writer.validate(disordered, {"kmesh": [8, 8, 8]}))
+
+
+def test_a_left_handed_lattice_is_flagged():
+    lattice = np.array([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, -4.0]])
+    cell = cm.Cell("lh", (4.0, 4.0, 4.0), (90.0, 90.0, 90.0), lattice, ())
+    assert "left-handed" in joined(writer.validate(cell, {"kmesh": [8, 8, 8]}))
+
+
+# -- assume_isolated --------------------------------------------------------
+
+
+def test_a_charged_molecule_without_a_correction_is_flagged(molecule_cell):
+    messages = joined(writer.validate(molecule_cell, {"tot_charge": -1.0, "kpoint_mode": "Gamma point only"}))
+    assert "assume_isolated" in messages
+
+
+def test_a_charged_molecule_with_a_correction_is_not_flagged(molecule_cell):
+    messages = joined(
+        writer.validate(
+            molecule_cell,
+            {
+                "tot_charge": -1.0,
+                "assume_isolated": "makov-payne",
+                "kpoint_mode": "Gamma point only",
+            },
+        )
+    )
+    assert "assume_isolated" not in messages
+
+
+def test_makov_payne_on_a_crystal_is_flagged(bulk_cell):
+    messages = joined(
+        writer.validate(bulk_cell, {"assume_isolated": "makov-payne", "kmesh": [8, 8, 8]})
+    )
+    assert "isolated cluster" in messages
+
+
+def test_two_d_correction_without_a_slab_is_flagged(bulk_cell):
+    messages = joined(writer.validate(bulk_cell, {"assume_isolated": "2D", "kmesh": [8, 8, 8]}))
+    assert "expects a slab" in messages
+
+
+def test_two_d_correction_on_a_slab_is_accepted(slab_cell):
+    messages = joined(
+        writer.validate(slab_cell, {"assume_isolated": "2D", "kmesh": [8, 8, 1]})
+    )
+    assert "expects a slab" not in messages
+
+
+def test_martyna_tuckerman_reminds_about_the_box_size(molecule_cell):
+    messages = joined(
+        writer.validate(
+            molecule_cell,
+            {"assume_isolated": "martyna-tuckerman", "kpoint_mode": "Gamma point only"},
+        )
+    )
+    assert "twice the size" in messages

@@ -142,3 +142,13 @@ def test_dialog_save_without_structure_warns(qapp, monkeypatch):
 def test_dialog_copy_preview(dialog, qapp):
     dialog.copy_preview()
     assert "&CONTROL" in qapp.clipboard().text()
+
+
+def test_dialog_writes_assume_isolated(dialog):
+    dialog.isolated_combo.setCurrentText("martyna-tuckerman")
+    assert "assume_isolated = 'martyna-tuckerman'" in dialog.preview.toPlainText()
+    assert dialog.persistent_settings["assume_isolated"] == "martyna-tuckerman"
+
+
+def test_dialog_omits_assume_isolated_by_default(dialog):
+    assert "assume_isolated" not in dialog.preview.toPlainText()
