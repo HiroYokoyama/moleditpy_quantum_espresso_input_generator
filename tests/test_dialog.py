@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qe_input_generator import writer  # noqa: E402
 from qe_input_generator.main_dialog import QeInputDialog, _to_float  # noqa: E402
 
-from test_cell_model import _FakeMol  # noqa: E402
+from shared_fixtures import _FakeMol  # noqa: E402
 
 
 @pytest.fixture
@@ -156,7 +156,7 @@ def test_dialog_omits_assume_isolated_by_default(dialog):
 
 def test_the_dialog_accepts_a_dropped_cif(dialog, tmp_path):
     """The drop works anywhere on the window as well as on the panel itself."""
-    from test_structure_panel import _FakeDropEvent, _FakeMime
+    from shared_fixtures import _FakeDropEvent, _FakeMime
 
     path = tmp_path / "dropped.cif"
     path.write_text("data_x\n", encoding="utf-8")
@@ -172,7 +172,7 @@ def test_the_dialog_accepts_a_dropped_cif(dialog, tmp_path):
 
 
 def test_a_drag_without_a_cif_is_refused_by_the_dialog(dialog):
-    from test_structure_panel import _FakeDropEvent, _FakeMime
+    from shared_fixtures import _FakeDropEvent, _FakeMime
 
     event = _FakeDropEvent(_FakeMime(["/tmp/notes.txt"]))
     dialog.dragEnterEvent(event)
@@ -182,7 +182,7 @@ def test_a_drag_without_a_cif_is_refused_by_the_dialog(dialog):
 
 
 def test_a_drag_move_follows_the_same_rule(dialog):
-    from test_structure_panel import _FakeDropEvent, _FakeMime
+    from shared_fixtures import _FakeDropEvent, _FakeMime
 
     event = _FakeDropEvent(_FakeMime(["/tmp/x.cif"]))
     dialog.dragMoveEvent(event)
@@ -223,7 +223,7 @@ class _ChargedMol:
         return self._atoms[index]
 
     def GetConformer(self):
-        from test_cell_model import _FakeConformer
+        from shared_fixtures import _FakeConformer
 
         return _FakeConformer(self._coords)
 
@@ -369,7 +369,7 @@ def test_copying_the_preview_reaches_the_clipboard(dialog, qapp):
 def test_the_box_is_drawn_as_soon_as_the_dialog_opens(qapp):
     """Opening the generator should show the cell, not an empty viewer."""
     pytest.importorskip("rdkit")
-    from test_structure_panel import _RecordingContext
+    from shared_fixtures import _RecordingContext
 
     mol = _FakeMol(["O", "H", "H"], [[0, 0, 0], [0.96, 0, 0], [-0.24, 0.93, 0]])
     context = _RecordingContext()
