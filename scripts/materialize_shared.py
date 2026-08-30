@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Copy the shared periodic modules from the ``_periodic_shared`` submodule
 into the plugin package, so the package is self-contained for tests and for
 the release zip.

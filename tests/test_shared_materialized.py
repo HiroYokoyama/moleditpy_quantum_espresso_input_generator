@@ -1,6 +1,6 @@
-﻿"""The shared periodic modules must be present before anything else runs.
+"""The shared periodic modules must be present before anything else runs.
 
-They are not committed here — ``scripts/materialize_shared.py`` copies them
+They are not committed here -- ``scripts/materialize_shared.py`` copies them
 out of the ``_periodic_shared`` submodule. A clone that skipped
 ``git submodule update --init`` or the materialize step gets a clear failure
 here instead of a confusing import error deeper in the suite.
