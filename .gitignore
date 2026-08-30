@@ -6,3 +6,10 @@ dist/
 build/
 *.egg-info/
 qe_input_generator/settings.json
+
+# Materialized from the _periodic_shared submodule by scripts/materialize_shared.py
+# — never commit these, they are generated at build/test time.
+qe_input_generator/cell_model.py
+qe_input_generator/cell_preview.py
+qe_input_generator/elements.py
+qe_input_generator/structure_panel.py
