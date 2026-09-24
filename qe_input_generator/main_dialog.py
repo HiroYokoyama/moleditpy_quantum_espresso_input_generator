@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from . import PLUGIN_NAME, PLUGIN_VERSION
 from . import writer
-from .structure_panel import StructurePanel, dropped_cif_path
+from .structure_panel import SOURCE_MOLECULE, StructurePanel, dropped_cif_path
 
 
 class QeInputDialog(QDialog):
@@ -343,7 +343,12 @@ class QeInputDialog(QDialog):
         self.kspacing_spin.setRange(0.001, 1.0)
         self.kspacing_spin.setDecimals(4)
         self.kspacing_spin.setSingleStep(0.005)
-        self.kspacing_spin.setSuffix(" 1/A")
+        self.kspacing_spin.setSuffix(" 1/A (no 2\u03c0)")
+        self.kspacing_spin.setToolTip(
+            "Largest distance between k-points along each reciprocal lattice vector, "
+            "without the 2\u03c0 factor: n = ceil(|b| / spacing).\n"
+            "VASP's KSPACING and pymatgen include 2\u03c0, so their 0.2 is about 0.032 here."
+        )
         form.addRow("Automatic spacing:", self.kspacing_spin)
         self.slab_kpoint_check = QCheckBox("For a slab, force the third k-point to 1")
         self.slab_kpoint_check.setChecked(True)
@@ -535,10 +540,17 @@ class QeInputDialog(QDialog):
             return
         from .cell_model import molecule_charge_and_multiplicity
 
-        try:
-            charge, multiplicity = molecule_charge_and_multiplicity(self._get_molecule())
-        except (ValueError, AttributeError, TypeError):
-            return
+        # The molecule open in MoleditPy only describes a cell boxed from it.
+        # For a CIF its charge belongs to something else
+        # entirely, so a crystal is written neutral rather than keeping
+        # whatever the molecule last put in the box.
+        if self.structure_panel.source_combo.currentText() != SOURCE_MOLECULE:
+            charge, multiplicity = 0, 1
+        else:
+            try:
+                charge, multiplicity = molecule_charge_and_multiplicity(self._get_molecule())
+            except (ValueError, AttributeError, TypeError):
+                return
         blocked = self._updating
         self._updating = True
         try:

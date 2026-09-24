@@ -250,7 +250,9 @@ def build_ions(settings: Dict) -> str:
         return ""
     if calculation in ("md", "vc-md"):
         entries = [
-            ("ion_dynamics", "verlet"),
+            # pw.x accepts only beeman for a variable-cell MD run and stops at
+            # once when given verlet.
+            ("ion_dynamics", "beeman" if calculation == "vc-md" else "verlet"),
             ("ion_temperature", "rescaling"),
             ("tempw", float(settings.get("temperature", 300.0))),
         ]
@@ -407,6 +409,11 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
         messages.append(
             f"A '{calculation}' run reads the charge density from a previous scf run — keep the "
             "same prefix and outdir, and do not delete the .save directory."
+        )
+    if calculation == "bands":
+        messages.append(
+            "A 'bands' run is written with a K_POINTS mesh here; for a band structure replace it "
+            "with a path (K_POINTS crystal_b or tpiba_b) through the high-symmetry points."
         )
     if calculation in ("vc-relax", "vc-md") and ecutwfc < 60.0:
         messages.append(
