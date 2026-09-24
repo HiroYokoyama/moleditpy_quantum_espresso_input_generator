@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 from .cell_model import (
@@ -44,6 +45,27 @@ ASSUME_ISOLATED = (
 )
 
 POSITION_UNITS = ("crystal (fractional)", "angstrom")
+
+# Namelists that take free-form keywords, in the order pw.x reads them.
+NAMELISTS = ("CONTROL", "SYSTEM", "ELECTRONS", "IONS", "CELL")
+
+# Every card pw.x accepts; a header line in the extra-cards text starts one.
+CARDS = (
+    "ATOMIC_SPECIES",
+    "ATOMIC_POSITIONS",
+    "K_POINTS",
+    "ADDITIONAL_K_POINTS",
+    "CELL_PARAMETERS",
+    "CONSTRAINTS",
+    "OCCUPATIONS",
+    "ATOMIC_VELOCITIES",
+    "ATOMIC_FORCES",
+    "SOLVENTS",
+    "HUBBARD",
+)
+
+# Cards this plugin writes itself; a user card of the same name replaces it.
+GENERATED_CARDS = ("ATOMIC_SPECIES", "CELL_PARAMETERS", "ATOMIC_POSITIONS", "K_POINTS")
 
 PSEUDO_PATTERNS = (
     "{El}.UPF",
@@ -95,6 +117,8 @@ def default_settings() -> Dict:
         "kspacing": 0.03,
         "position_units": POSITION_UNITS[0],
         "extra_system": "",
+        "extra_namelists": {},
+        "extra_cards": "",
         "supercell": [1, 1, 1],
         "padding": 6.0,
         "cubic_box": False,
@@ -120,16 +144,121 @@ def _fortran(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_%]*(\s*\([\s0-9,]*\))?$")
+
+
+def _split_outside_quotes(text: str, separator: str) -> List[str]:
+    parts, current, quote = [], [], ""
+    for char in text:
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char == separator:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _strip_comment(line: str) -> str:
+    # A '!' inside a quoted string (a title, a path) is not a comment.
+    return _split_outside_quotes(line, "!")[0]
+
+
+def _key_name(key: str) -> str:
+    """Normalised key for matching: case and spaces do not count in Fortran."""
+    return "".join(key.split()).lower()
+
+
+def parse_keywords(text: str) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """Read ``key = value`` pairs typed by the user.
+
+    Several pairs may share a line when separated by commas, ``!`` starts a
+    comment, and stray ``&NAME`` or ``/`` lines are skipped. Values are kept
+    exactly as typed, so any Fortran literal pw.x accepts can be written.
+    Returns the pairs and a list of lines that could not be read.
+    """
+    pairs: List[Tuple[str, str]] = []
+    errors: List[str] = []
+    for raw in str(text or "").splitlines():
+        line = _strip_comment(raw).strip()
+        if not line or line == "/" or line.startswith("&"):
+            continue
+        if line.count("'") % 2 or line.count('"') % 2:
+            errors.append(f"unclosed quote in '{raw.strip()}'")
+            continue
+        for position, chunk in enumerate(_split_outside_quotes(line, ",")):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            key, sign, value = chunk.partition("=")
+            key, value = key.strip(), value.strip()
+            if not sign or not value or not _KEY.match(key):
+                if position and pairs and not sign:
+                    # A comma inside an array value such as celldm; glue it back.
+                    last_key, last_value = pairs[-1]
+                    pairs[-1] = (last_key, f"{last_value}, {chunk}")
+                    continue
+                errors.append(f"'{chunk}' is not 'keyword = value'")
+                continue
+            pairs.append((key, value))
+    return pairs, errors
+
+
+def extra_keywords(settings: Dict, name: str) -> str:
+    """Free-form text for one namelist, including the older &SYSTEM-only field."""
+    extras = settings.get("extra_namelists") or {}
+    text = str(extras.get(name, "") or "")
+    if name == "SYSTEM" and settings.get("extra_system"):
+        text = str(settings["extra_system"]) + "\n" + text
+    return text
+
+
 def _namelist(name: str, entries: List[Tuple[str, object]], extra: str = "") -> str:
+    """Write a namelist; a user keyword replaces a generated one of the same name."""
+    rows: List[Tuple[str, str]] = [(key, _fortran(value)) for key, value in entries]
+    index = {_key_name(key): position for position, (key, _) in enumerate(rows)}
+    for key, value in parse_keywords(extra)[0]:
+        position = index.get(_key_name(key))
+        if position is None:
+            index[_key_name(key)] = len(rows)
+            rows.append((key, value))
+        else:
+            rows[position] = (rows[position][0], value)
     lines = [f"&{name}"]
-    width = max((len(key) for key, _ in entries), default=1)
-    for key, value in entries:
-        lines.append(f"  {key:<{width}} = {_fortran(value)}")
-    for line in str(extra or "").splitlines():
-        if line.strip():
-            lines.append(f"  {line.strip()}")
+    width = max((len(key) for key, _ in rows), default=1)
+    for key, value in rows:
+        lines.append(f"  {key:<{width}} = {value}")
     lines.append("/")
     return "\n".join(lines)
+
+
+def split_cards(text: str) -> Tuple[List[Tuple[str, str]], List[str]]:
+    """Cut the extra-cards text into (card name, block text) pairs.
+
+    Lines before the first card header cannot be placed and are reported.
+    """
+    blocks: List[Tuple[str, List[str]]] = []
+    stray: List[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.rstrip()
+        words = line.split()
+        head = words[0].upper() if words else ""
+        if head in CARDS:
+            blocks.append((head, [line.strip()]))
+        elif blocks:
+            if line.strip():
+                blocks[-1][1].append(line)
+        elif line.strip():
+            stray.append(line.strip())
+    return [(name, "\n".join(lines)) for name, lines in blocks], stray
+
+
+def user_cards(settings: Dict) -> Dict[str, str]:
+    return {name: block for name, block in split_cards(settings.get("extra_cards", ""))[0]}
 
 
 def pseudo_filename(element: str, pattern: str) -> str:
@@ -181,7 +310,7 @@ def build_control(settings: Dict) -> str:
         entries.append(("forc_conv_thr", float(settings.get("forc_conv_thr", 1e-4))))
     if calculation in ("md", "vc-md"):
         entries.append(("dt", float(settings.get("dt", 20.0))))
-    return _namelist("CONTROL", entries)
+    return _namelist("CONTROL", entries, extra_keywords(settings, "CONTROL"))
 
 
 def build_system(cell: Cell, settings: Dict) -> str:
@@ -229,7 +358,7 @@ def build_system(cell: Cell, settings: Dict) -> str:
         for index in range(len(counts)):
             entries.append((f"starting_magnetization({index + 1})", magnetization))
 
-    return _namelist("SYSTEM", entries, settings.get("extra_system", ""))
+    return _namelist("SYSTEM", entries, extra_keywords(settings, "SYSTEM"))
 
 
 def build_electrons(settings: Dict) -> str:
@@ -241,6 +370,7 @@ def build_electrons(settings: Dict) -> str:
             ("electron_maxstep", int(settings.get("electron_maxstep", 200))),
             ("diagonalization", settings.get("diagonalization", "david")),
         ],
+        extra_keywords(settings, "ELECTRONS"),
     )
 
 
@@ -258,7 +388,7 @@ def build_ions(settings: Dict) -> str:
         ]
     else:
         entries = [("ion_dynamics", "bfgs")]
-    return _namelist("IONS", entries)
+    return _namelist("IONS", entries, extra_keywords(settings, "IONS"))
 
 
 def build_cell_namelist(settings: Dict) -> str:
@@ -271,6 +401,7 @@ def build_cell_namelist(settings: Dict) -> str:
             ("press", float(settings.get("press", 0.0))),
             ("press_conv_thr", 0.5),
         ],
+        extra_keywords(settings, "CELL"),
     )
 
 
@@ -346,17 +477,27 @@ def build_kpoints(cell: Cell, settings: Dict) -> str:
 
 def build_input(cell: Cell, settings: Optional[Dict] = None) -> str:
     settings = {**default_settings(), **(settings or {})}
+    cards, stray = split_cards(settings.get("extra_cards", ""))
+    replaced = {name: block for name, block in cards if name in GENERATED_CARDS}
+    generated = [
+        ("ATOMIC_SPECIES", build_atomic_species(cell, settings)),
+        ("CELL_PARAMETERS", build_cell_parameters(cell)),
+        ("ATOMIC_POSITIONS", build_atomic_positions(cell, settings)),
+        ("K_POINTS", build_kpoints(cell, settings)),
+    ]
     blocks = [
         build_control(settings),
         build_system(cell, settings),
         build_electrons(settings),
         build_ions(settings),
         build_cell_namelist(settings),
-        build_atomic_species(cell, settings),
-        build_cell_parameters(cell),
-        build_atomic_positions(cell, settings),
-        build_kpoints(cell, settings),
     ]
+    blocks += [replaced.get(name, block) for name, block in generated]
+    blocks += [block for name, block in cards if name not in GENERATED_CARDS]
+    if stray:
+        # Kept rather than dropped, so nothing typed silently disappears;
+        # validate() explains why pw.x will not read it.
+        blocks.append("\n".join(stray))
     return "\n\n".join(block for block in blocks if block) + "\n"
 
 
@@ -381,15 +522,20 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
     # A broken structure outranks every keyword warning below it.
     messages: List[str] = list(structure_warnings(cell))
 
+    messages.extend(extra_input_warnings(settings))
+    custom_kpoints = user_cards(settings).get("K_POINTS")
+
     mesh = effective_mesh(cell, settings)
     mode = settings.get("kpoint_mode", KPOINT_MODES[1])
 
-    if cell.source == "molecule" and (mode != "Gamma point only" and max(mesh) > 1):
+    if custom_kpoints is not None:
+        pass
+    elif cell.source == "molecule" and (mode != "Gamma point only" and max(mesh) > 1):
         messages.append(
             f"An isolated molecule in a box is being sampled with a {mesh[0]}x{mesh[1]}x{mesh[2]} "
             "mesh — K_POINTS gamma is enough and uses the faster gamma-only algorithms."
         )
-    if looks_like_slab(cell) and mesh[2] > 1:
+    if looks_like_slab(cell) and mesh[2] > 1 and custom_kpoints is None:
         messages.append(
             "The slab is sampled along the vacuum direction; set the third k-point to 1."
         )
@@ -410,7 +556,10 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
             f"A '{calculation}' run reads the charge density from a previous scf run — keep the "
             "same prefix and outdir, and do not delete the .save directory."
         )
-    if calculation == "bands":
+    path_kpoints = custom_kpoints is not None and custom_kpoints.split()[1:2] in (
+        ["crystal_b"], ["tpiba_b"], ["{crystal_b}"], ["{tpiba_b}"], ["(crystal_b)"], ["(tpiba_b)"]
+    )
+    if calculation == "bands" and not path_kpoints:
         messages.append(
             "A 'bands' run is written with a K_POINTS mesh here; for a band structure replace it "
             "with a path (K_POINTS crystal_b or tpiba_b) through the high-symmetry points."
@@ -471,6 +620,41 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
             " — the written name is a guess from the pattern."
         )
 
+    return messages
+
+
+def extra_input_warnings(settings: Dict) -> List[str]:
+    """Problems in the free-form keywords and cards."""
+    messages: List[str] = []
+    calculation = settings.get("calculation", "scf")
+    for name in NAMELISTS:
+        text = extra_keywords(settings, name)
+        pairs, errors = parse_keywords(text)
+        for error in errors:
+            messages.append(f"Additional &{name}: {error} — the line is left out.")
+        if pairs and (
+            (name == "IONS" and not _needs_ions(calculation))
+            or (name == "CELL" and not _needs_cell(calculation))
+        ):
+            messages.append(
+                f"A '{calculation}' run has no &{name} namelist, so the additional &{name} "
+                "keywords are not written."
+            )
+    cards, stray = split_cards(settings.get("extra_cards", ""))
+    if stray:
+        messages.append(
+            "Additional cards: text before the first card name (" + stray[0] + ") belongs to "
+            "no card, and pw.x will stop on it."
+        )
+    names = [name for name, _ in cards]
+    for name in sorted({name for name in names if names.count(name) > 1}):
+        messages.append(f"Additional cards: {name} is given more than once.")
+    for name in ("ATOMIC_SPECIES", "CELL_PARAMETERS", "ATOMIC_POSITIONS"):
+        if name in names:
+            messages.append(
+                f"Your {name} card replaces the one built from the structure; keep it in step "
+                "with the atoms by hand."
+            )
     return messages
 
 

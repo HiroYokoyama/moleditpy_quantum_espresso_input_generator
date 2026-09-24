@@ -26,8 +26,7 @@ preview of the complete input before you save.
   `vc-md`, with `&IONS` and `&CELL` written only when the run type needs them
 - **&SYSTEM control** — `ecutwfc` with an automatic `ecutrho = 8 x ecutwfc`,
   occupations and smearing, `nspin = 2` with per-type `starting_magnetization`,
-  `input_dft` overrides, `vdw_corr` (D2 / D3 / XDM / TS), plus a free-text block
-  for anything else
+  `input_dft` overrides, `vdw_corr` (D2 / D3 / XDM / TS)
 - **&ELECTRONS control** — `conv_thr`, `mixing_beta`, `electron_maxstep`,
   `diagonalization`
 - **K_POINTS** — `gamma`, an automatic mesh with shifts, or a mesh derived from a
@@ -38,6 +37,11 @@ preview of the complete input before you save.
 - **nbnd, tot_charge** — including reading the charge and open-shell state straight
   from the molecule
 - Coordinates written as `crystal` or `angstrom`, always grouped by species
+- **Any other pw.x option** — the Advanced tab takes free `keyword = value` lines
+  for each of `&CONTROL`, `&SYSTEM`, `&ELECTRONS`, `&IONS` and `&CELL` (a keyword
+  the other tabs already write is replaced, not repeated), and extra cards such as
+  `HUBBARD`, `CONSTRAINTS`, `OCCUPATIONS` or `ADDITIONAL_K_POINTS`; a `K_POINTS`
+  card typed there (e.g. a `crystal_b` band path) replaces the generated mesh
 
 - **Checks** — a warning strip flags the classic mistakes: a molecule sampled
   with a dense k-mesh, k-points across a slab's vacuum, too little vacuum,

@@ -73,6 +73,7 @@ class QeInputDialog(QDialog):
         self.tabs.addTab(self._build_control_tab(), "Control")
         self.tabs.addTab(self._build_system_tab(), "System")
         self.tabs.addTab(self._build_kpoints_tab(), "K-points")
+        self.tabs.addTab(self._build_advanced_tab(), "Advanced")
 
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
@@ -278,13 +279,6 @@ class QeInputDialog(QDialog):
         elec_form.addRow("diagonalization:", self.diag_combo)
         outer.addWidget(elec_box)
 
-        extra_box = QGroupBox("Additional &SYSTEM keywords")
-        extra_layout = QVBoxLayout(extra_box)
-        self.extra_edit = QPlainTextEdit()
-        self.extra_edit.setPlaceholderText("nbnd = 40\nassume_isolated = 'makov-payne'")
-        self.extra_edit.setMaximumHeight(110)
-        extra_layout.addWidget(self.extra_edit)
-        outer.addWidget(extra_box)
         outer.addStretch(1)
 
         for widget in (
@@ -311,7 +305,47 @@ class QeInputDialog(QDialog):
         for widget in (self.ecutrho_auto_check, self.nspin_check):
             widget.toggled.connect(self.update_preview)
         self.conv_thr_edit.textChanged.connect(self.update_preview)
-        self.extra_edit.textChanged.connect(self.update_preview)
+        return tab
+
+    def _build_advanced_tab(self) -> QWidget:
+        tab = QWidget()
+        outer = QVBoxLayout(tab)
+        note = QLabel(
+            "Any pw.x keyword can be added here, one <i>keyword = value</i> per line (commas "
+            "also separate them, <i>!</i> starts a comment). Values are written exactly as "
+            "typed, so quote strings: <i>mixing_mode = 'local-TF'</i>. A keyword the other "
+            "tabs already write is replaced, not repeated."
+        )
+        note.setWordWrap(True)
+        outer.addWidget(note)
+        placeholders = {
+            "CONTROL": "restart_mode = 'restart'\nmax_seconds = 86000\ndisk_io = 'low'",
+            "SYSTEM": "nbnd = 40\nnoncolin = .true.\nlspinorb = .true.\necutfock = 100",
+            "ELECTRONS": "mixing_mode = 'local-TF'\nmixing_ndim = 12\nstartingwfc = 'random'",
+            "IONS": "trust_radius_max = 0.5\nupscale = 100",
+            "CELL": "cell_dofree = 'ibrav'\npress_conv_thr = 0.1",
+        }
+        self.extra_tabs = QTabWidget()
+        self.extra_edits = {}
+        for name in writer.NAMELISTS:
+            edit = QPlainTextEdit()
+            edit.setFont(QFont("Courier New", 9))
+            edit.setPlaceholderText(placeholders[name])
+            edit.textChanged.connect(self.update_preview)
+            self.extra_edits[name] = edit
+            self.extra_tabs.addTab(edit, f"&{name}")
+        self.extra_cards_edit = QPlainTextEdit()
+        self.extra_cards_edit.setFont(QFont("Courier New", 9))
+        self.extra_cards_edit.setPlaceholderText(
+            "HUBBARD ortho-atomic\n  U Fe-3d 4.0\n\n"
+            "K_POINTS crystal_b\n  3\n  0.0 0.0 0.0 20\n  0.5 0.0 0.0 20\n  0.5 0.5 0.0 1\n\n"
+            "(a card named here replaces the generated card of the same name)"
+        )
+        self.extra_cards_edit.textChanged.connect(self.update_preview)
+        self.extra_tabs.addTab(self.extra_cards_edit, "Cards")
+        outer.addWidget(self.extra_tabs, 1)
+        # The older single &SYSTEM box, kept as a name for callers that used it.
+        self.extra_edit = self.extra_edits["SYSTEM"]
         return tab
 
     def _build_kpoints_tab(self) -> QWidget:
@@ -432,7 +466,15 @@ class QeInputDialog(QDialog):
             self.mixing_spin.setValue(float(settings.get("mixing_beta", 0.7)))
             self.maxstep_spin.setValue(int(settings.get("electron_maxstep", 200)))
             self.diag_combo.setCurrentText(settings.get("diagonalization", "david"))
-            self.extra_edit.setPlainText(str(settings.get("extra_system", "") or ""))
+            extras = dict(settings.get("extra_namelists") or {})
+            if settings.get("extra_system"):
+                # Settings saved before 0.10.0 kept only &SYSTEM extras.
+                extras["SYSTEM"] = "\n".join(
+                    text for text in (str(settings["extra_system"]), extras.get("SYSTEM", "")) if text
+                )
+            for name, edit in self.extra_edits.items():
+                edit.setPlainText(str(extras.get(name, "") or ""))
+            self.extra_cards_edit.setPlainText(str(settings.get("extra_cards", "") or ""))
 
             self.kmode_combo.setCurrentText(settings.get("kpoint_mode", writer.KPOINT_MODES[1]))
             for spin, value in zip(self.kmesh_spins, settings.get("kmesh", [4, 4, 4])):
@@ -485,7 +527,14 @@ class QeInputDialog(QDialog):
             "mixing_beta": self.mixing_spin.value(),
             "electron_maxstep": self.maxstep_spin.value(),
             "diagonalization": self.diag_combo.currentText(),
-            "extra_system": self.extra_edit.toPlainText(),
+            # Migrated into extra_namelists["SYSTEM"] by apply_settings.
+            "extra_system": "",
+            "extra_namelists": {
+                name: edit.toPlainText()
+                for name, edit in self.extra_edits.items()
+                if edit.toPlainText().strip()
+            },
+            "extra_cards": self.extra_cards_edit.toPlainText(),
             "kpoint_mode": self.kmode_combo.currentText(),
             "kmesh": [spin.value() for spin in self.kmesh_spins],
             "kshift": [1 if check.isChecked() else 0 for check in self.kshift_checks],
