@@ -109,9 +109,9 @@ def test_fixed_occupations_on_a_slab(slab_cell):
     assert "Fixed occupations" in joined(messages)
 
 
-def test_tetrahedra_outside_nscf(bulk_cell):
-    messages = writer.validate(bulk_cell, {"kmesh": [8, 8, 8], "occupations": "tetrahedra"})
-    assert "tetrahedron occupations" in joined(messages)
+def test_tetrahedra_force_warning(bulk_cell):
+    messages = writer.validate(bulk_cell, {"calculation": "relax", "kmesh": [8, 8, 8], "occupations": "tetrahedra"})
+    assert "Tetrahedron occupations" in joined(messages)
 
 
 def test_charged_molecule_suggests_an_isolated_correction(molecule_cell):

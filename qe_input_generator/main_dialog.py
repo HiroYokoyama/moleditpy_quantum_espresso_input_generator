@@ -7,6 +7,7 @@ import os
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -29,7 +30,8 @@ from PyQt6.QtWidgets import (
 )
 
 from . import PLUGIN_NAME, PLUGIN_VERSION
-from . import writer
+from . import writer, pseudos
+from .cell_model import molecule_charge_and_multiplicity
 from .structure_panel import SOURCE_MOLECULE, StructurePanel, dropped_cif_path
 
 
@@ -430,6 +432,8 @@ class QeInputDialog(QDialog):
 
     def apply_settings(self, settings) -> None:
         settings = {**writer.default_settings(), **(settings or {})}
+        if settings["diagonalization"] not in writer.DIAGONALIZATION:
+            QMessageBox.warning(self, "Unsupported solver", "PPCG is no longer supported. Select a supported diagonalization method.")
         self._updating = True
         try:
             self.calc_combo.setCurrentText(settings.get("calculation", "scf"))
@@ -449,7 +453,8 @@ class QeInputDialog(QDialog):
             self.temp_spin.setValue(float(settings.get("temperature", 300.0)))
             self.dt_spin.setValue(float(settings.get("dt", 20.0)))
 
-            self.functional_combo.setCurrentText(settings.get("functional", writer.FUNCTIONALS[0]))
+            functional = settings.get("functional", writer.FUNCTIONALS[0])
+            self.functional_combo.setCurrentText(writer.FUNCTIONALS[0] if functional == "POTCAR/UPF default" else functional)
             self.ecutwfc_spin.setValue(float(settings.get("ecutwfc", 60.0)))
             self.ecutrho_auto_check.setChecked(bool(settings.get("ecutrho_auto", True)))
             self.ecutrho_spin.setValue(float(settings.get("ecutrho", 480.0)))
@@ -580,15 +585,20 @@ class QeInputDialog(QDialog):
             return
 
         self.structure_panel.refresh_summary(self._cell)
-        self.preview.setPlainText(writer.build_input(self._cell, settings))
+        try:
+            content = writer.build_input(self._cell, settings)
+        except ValueError as exc:
+            self.preview.setPlainText(f"! Invalid input: {exc}")
+            self._show_warnings(writer.validate(self._cell, settings))
+            self.save_button.setEnabled(False)
+            return
+        self.preview.setPlainText(content)
         self._show_warnings(writer.validate(self._cell, settings))
         self.save_button.setEnabled(True)
 
     def _apply_auto_charge(self) -> None:
         if not self.auto_charge_check.isChecked() or self._get_molecule is None:
             return
-        from .cell_model import molecule_charge_and_multiplicity
-
         # The molecule open in MoleditPy only describes a cell boxed from it.
         # For a CIF its charge belongs to something else
         # entirely, so a crystal is written neutral rather than keeping
@@ -619,8 +629,6 @@ class QeInputDialog(QDialog):
             self.scan_pseudo_folder()
 
     def scan_pseudo_folder(self) -> None:
-        from . import pseudos
-
         folder = self.pseudo_search_edit.text().strip()
         if self._cell is None:
             self.pseudo_status_label.setText("Load a structure first.")
@@ -641,8 +649,6 @@ class QeInputDialog(QDialog):
         self.update_preview()
 
     def copy_pseudos(self) -> None:
-        from . import pseudos
-
         if not self._pseudo_files:
             QMessageBox.information(
                 self,
@@ -673,8 +679,6 @@ class QeInputDialog(QDialog):
         self.warning_label.setVisible(True)
 
     def copy_preview(self) -> None:
-        from PyQt6.QtWidgets import QApplication
-
         clipboard = QApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(self.preview.toPlainText())
@@ -686,6 +690,11 @@ class QeInputDialog(QDialog):
             )
             return
         settings = self.read_settings()
+        try:
+            content = writer.build_input(self._cell, settings)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Quantum ESPRESSO input", str(exc))
+            return
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save pw.x input",
@@ -696,7 +705,7 @@ class QeInputDialog(QDialog):
             return
         try:
             with open(path, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(writer.build_input(self._cell, settings))
+                handle.write(content)
         except OSError as exc:
             QMessageBox.critical(
                 self, "Quantum ESPRESSO Input Generator", f"Could not write the file:\n{exc}"

@@ -71,9 +71,10 @@ def test_parser_handles_commas_comments_and_quotes():
     assert errors == []
 
 
-def test_unreadable_lines_are_reported_and_left_out(cell):
+def test_unreadable_lines_are_reported_and_block_generation(cell):
     settings = {"extra_namelists": {"SYSTEM": "nbnd 40\nx = 'open"}}
-    assert "nbnd 40" not in writer.build_input(cell, settings)
+    with pytest.raises(ValueError, match="Additional &SYSTEM"):
+        writer.build_input(cell, settings)
     messages = writer.validate(cell, settings)
     assert sum("Additional &SYSTEM" in message for message in messages) == 2
 

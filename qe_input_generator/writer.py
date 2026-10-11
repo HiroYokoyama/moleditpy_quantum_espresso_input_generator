@@ -17,7 +17,7 @@ from .elements import atomic_mass
 CALCULATIONS = ("scf", "nscf", "bands", "relax", "vc-relax", "md", "vc-md")
 
 FUNCTIONALS = (
-    "POTCAR/UPF default",
+    "UPF default",
     "PBE",
     "PBEsol",
     "revPBE",
@@ -32,7 +32,7 @@ SMEARING = ("mv (Marzari-Vanderbilt)", "gaussian", "mp (Methfessel-Paxton)", "fd
 
 VDW_OPTIONS = ("None", "grimme-d2", "grimme-d3", "xdm", "ts-vdw")
 
-DIAGONALIZATION = ("david", "cg", "ppcg", "paro", "rmm-davidson")
+DIAGONALIZATION = ("david", "cg", "paro", "rmm-davidson", "rmm-paro")
 
 KPOINT_MODES = ("Gamma point only", "Automatic mesh", "Automatic (spacing)")
 
@@ -135,8 +135,10 @@ def _fortran(value) -> str:
         return ".true." if value else ".false."
     if isinstance(value, float):
         if value != 0 and (abs(value) < 1e-3 or abs(value) >= 1e5):
-            return f"{value:.4e}".replace("e", "d")
-        return f"{value:g}"
+            mantissa, exponent = f"{value:.14e}".split("e")
+            whole, fraction = mantissa.rstrip("0").split(".")
+            return f"{whole}.{fraction.ljust(4, '0')}d{exponent}"
+        return f"{value:.15g}"
     if isinstance(value, int):
         return str(value)
     # Fortran escapes a quote inside a quoted string by doubling it; a title or
@@ -148,19 +150,34 @@ _KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_%]*(\s*\([\s0-9,]*\))?$")
 
 
 def _split_outside_quotes(text: str, separator: str) -> List[str]:
-    parts, current, quote = [], [], ""
+    parts, current, quote, depth = [], [], "", 0
     for char in text:
         if quote:
             quote = "" if char == quote else quote
         elif char in "'\"":
             quote = char
-        elif char == separator:
+        elif char == "(" and separator == ",":
+            depth += 1
+        elif char == ")" and separator == ",":
+            depth -= 1
+        elif char == separator and depth == 0:
             parts.append("".join(current))
             current = []
             continue
         current.append(char)
     parts.append("".join(current))
     return parts
+
+
+def _has_unclosed_quote(text: str) -> bool:
+    quote = ""
+    for char in text:
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+    return bool(quote)
 
 
 def _strip_comment(line: str) -> str:
@@ -187,9 +204,10 @@ def parse_keywords(text: str) -> Tuple[List[Tuple[str, str]], List[str]]:
         line = _strip_comment(raw).strip()
         if not line or line == "/" or line.startswith("&"):
             continue
-        if line.count("'") % 2 or line.count('"') % 2:
+        if _has_unclosed_quote(line):
             errors.append(f"unclosed quote in '{raw.strip()}'")
             continue
+        line_start = len(pairs)
         for position, chunk in enumerate(_split_outside_quotes(line, ",")):
             chunk = chunk.strip()
             if not chunk:
@@ -197,7 +215,7 @@ def parse_keywords(text: str) -> Tuple[List[Tuple[str, str]], List[str]]:
             key, sign, value = chunk.partition("=")
             key, value = key.strip(), value.strip()
             if not sign or not value or not _KEY.match(key):
-                if position and pairs and not sign:
+                if position and len(pairs) > line_start and not sign:
                     # A comma inside an array value such as celldm; glue it back.
                     last_key, last_value = pairs[-1]
                     pairs[-1] = (last_key, f"{last_value}, {chunk}")
@@ -221,7 +239,10 @@ def _namelist(name: str, entries: List[Tuple[str, object]], extra: str = "") -> 
     """Write a namelist; a user keyword replaces a generated one of the same name."""
     rows: List[Tuple[str, str]] = [(key, _fortran(value)) for key, value in entries]
     index = {_key_name(key): position for position, (key, _) in enumerate(rows)}
-    for key, value in parse_keywords(extra)[0]:
+    pairs, errors = parse_keywords(extra)
+    if errors:
+        raise ValueError(f"Additional &{name}: " + "; ".join(errors))
+    for key, value in pairs:
         position = index.get(_key_name(key))
         if position is None:
             index[_key_name(key)] = len(rows)
@@ -296,7 +317,7 @@ def build_control(settings: Dict) -> str:
     calculation = settings.get("calculation", "scf")
     entries: List[Tuple[str, object]] = [
         ("calculation", calculation),
-        ("title", str(settings.get("title", "")).replace("\n", " ")),
+        ("title", " ".join(str(settings.get("title", "")).splitlines())),
         ("prefix", settings.get("prefix", "pwscf")),
         ("outdir", settings.get("outdir", "./out")),
         ("pseudo_dir", settings.get("pseudo_dir", "./pseudo")),
@@ -337,7 +358,7 @@ def build_system(cell: Cell, settings: Dict) -> str:
         entries.append(("tot_charge", charge))
 
     functional = settings.get("functional", FUNCTIONALS[0])
-    if functional != FUNCTIONALS[0]:
+    if functional not in (FUNCTIONALS[0], "POTCAR/UPF default"):
         entries.append(("input_dft", functional))
 
     vdw = settings.get("vdw", "None")
@@ -362,6 +383,8 @@ def build_system(cell: Cell, settings: Dict) -> str:
 
 
 def build_electrons(settings: Dict) -> str:
+    if settings.get("diagonalization", "david") not in DIAGONALIZATION:
+        raise ValueError("Unsupported diagonalization; PPCG support ended in December 2024.")
     return _namelist(
         "ELECTRONS",
         [
@@ -478,6 +501,8 @@ def build_kpoints(cell: Cell, settings: Dict) -> str:
 def build_input(cell: Cell, settings: Optional[Dict] = None) -> str:
     settings = {**default_settings(), **(settings or {})}
     cards, stray = split_cards(settings.get("extra_cards", ""))
+    if stray:
+        raise ValueError("Additional card text must begin with a recognized card header.")
     replaced = {name: block for name, block in cards if name in GENERATED_CARDS}
     generated = [
         ("ATOMIC_SPECIES", build_atomic_species(cell, settings)),
@@ -494,10 +519,12 @@ def build_input(cell: Cell, settings: Optional[Dict] = None) -> str:
     ]
     blocks += [replaced.get(name, block) for name, block in generated]
     blocks += [block for name, block in cards if name not in GENERATED_CARDS]
-    if stray:
-        # Kept rather than dropped, so nothing typed silently disappears;
-        # validate() explains why pw.x will not read it.
-        blocks.append("\n".join(stray))
+    system_pairs = dict((_key_name(key), value) for key, value in parse_keywords(blocks[1])[0])
+    occupations = system_pairs.get("occupations", "").strip("'\"")
+    kpoint_header = replaced.get("K_POINTS", generated[-1][1]).splitlines()[0].split()
+    kpoint_mode = kpoint_header[1].strip("{}()").lower() if len(kpoint_header) > 1 else "tpiba"
+    if occupations.startswith("tetrahedra") and kpoint_mode != "automatic":
+        raise ValueError("Tetrahedron occupations require an automatic uniform k-point mesh.")
     return "\n\n".join(block for block in blocks if block) + "\n"
 
 
@@ -574,9 +601,10 @@ def validate(cell: Cell, settings: Optional[Dict] = None) -> List[str]:
         messages.append(
             "Fixed occupations rarely converge for a metallic slab; smearing is the usual choice."
         )
-    if settings.get("occupations") in ("tetrahedra", "tetrahedra_opt") and calculation != "nscf":
+    if settings.get("occupations") in ("tetrahedra", "tetrahedra_opt") and _needs_ions(calculation):
         messages.append(
-            "The tetrahedron occupations are meant for a DOS-style nscf run; use smearing for scf."
+            "Tetrahedron occupations are less suited to forces, optimization and dynamics; "
+            "converge the k-point mesh and compare smearing."
         )
 
     if settings.get("nspin") and abs(float(settings.get("starting_magnetization", 0.5))) < 1e-9:
@@ -631,7 +659,7 @@ def extra_input_warnings(settings: Dict) -> List[str]:
         text = extra_keywords(settings, name)
         pairs, errors = parse_keywords(text)
         for error in errors:
-            messages.append(f"Additional &{name}: {error} — the line is left out.")
+            messages.append(f"Additional &{name}: {error} — correct it before saving.")
         if pairs and (
             (name == "IONS" and not _needs_ions(calculation))
             or (name == "CELL" and not _needs_cell(calculation))
