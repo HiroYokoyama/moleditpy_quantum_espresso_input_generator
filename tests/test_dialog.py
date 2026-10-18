@@ -109,7 +109,7 @@ def test_to_float_accepts_fortran_exponents(text, expected):
 
 
 def test_dialog_save_writes_the_input(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
 
     target = tmp_path / "si.scf.in"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
@@ -121,7 +121,7 @@ def test_dialog_save_writes_the_input(dialog, tmp_path, monkeypatch):
 
 
 def test_dialog_save_is_cancellable(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog
+    from PySide6.QtWidgets import QFileDialog
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
     dialog.save_input()
@@ -129,7 +129,7 @@ def test_dialog_save_is_cancellable(dialog, tmp_path, monkeypatch):
 
 
 def test_dialog_save_without_structure_warns(qapp, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     seen = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: seen.append(a))
@@ -291,7 +291,7 @@ def test_copying_pseudos_puts_them_in_the_pseudo_dir(dialog, tmp_path, monkeypat
     dialog.pseudo_dir_edit.setText(str(destination))
     dialog.scan_pseudo_folder()
 
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     dialog.copy_pseudos()
@@ -299,7 +299,7 @@ def test_copying_pseudos_puts_them_in_the_pseudo_dir(dialog, tmp_path, monkeypat
 
 
 def test_copying_without_a_scan_says_to_scan_first(dialog, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     seen = []
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: seen.append(a))
@@ -309,7 +309,7 @@ def test_copying_without_a_scan_says_to_scan_first(dialog, monkeypatch):
 
 
 def test_copying_from_a_missing_folder_reports_the_error(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     seen = []
     monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: seen.append(a))
@@ -321,7 +321,7 @@ def test_copying_from_a_missing_folder_reports_the_error(dialog, tmp_path, monke
 
 def test_saving_to_an_unwritable_path_reports_the_error(dialog, tmp_path, monkeypatch):
     """A failed write must say so, not look like it worked."""
-    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
 
     target = tmp_path / "missing" / "pw.in"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
@@ -332,7 +332,7 @@ def test_saving_to_an_unwritable_path_reports_the_error(dialog, tmp_path, monkey
 
 
 def test_saving_writes_the_input(dialog, tmp_path, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
 
     target = tmp_path / "pw.in"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
@@ -342,14 +342,14 @@ def test_saving_writes_the_input(dialog, tmp_path, monkeypatch):
 
 
 def test_cancelling_the_save_writes_nothing(dialog, monkeypatch):
-    from PyQt6.QtWidgets import QFileDialog
+    from PySide6.QtWidgets import QFileDialog
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
     dialog.save_input()  # must not raise
 
 
 def test_saving_without_a_structure_warns(qapp, monkeypatch):
-    from PyQt6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QMessageBox
 
     seen = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: seen.append(a))
@@ -361,7 +361,7 @@ def test_saving_without_a_structure_warns(qapp, monkeypatch):
 
 def test_copying_the_preview_reaches_the_clipboard(dialog, qapp):
     dialog.copy_preview()
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     assert "&CONTROL" in QApplication.clipboard().text()
 
