@@ -5,7 +5,7 @@ import os
 from .writer import default_settings
 
 PLUGIN_NAME = "Quantum ESPRESSO Input Generator"
-PLUGIN_VERSION = "0.12.0"
+PLUGIN_VERSION = "0.13.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Generate Quantum ESPRESSO pw.x inputs from the current molecule "
@@ -15,7 +15,7 @@ PLUGIN_DESCRIPTION = (
 PLUGIN_CATEGORY = "Export"
 PLUGIN_TAGS = ["DFT", "Generator"]
 PLUGIN_DEPENDENCIES = ["numpy", "pyvista", "rdkit"]
-PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
+PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=5.0.0, <6.0.0"
 
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 WINDOW_ID = "qe_input_generator_dialog"
