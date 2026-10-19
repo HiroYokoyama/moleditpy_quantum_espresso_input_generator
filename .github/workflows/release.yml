@@ -61,7 +61,7 @@ jobs:
 
       - name: Build release package
         run: |
-          cp README.md LICENSE qe_input_generator/
+          cp README.md LICENSE COPYING LICENSING.md qe_input_generator/
           zip -r "qe_input_generator_${VERSION}.zip" qe_input_generator/ \
             --exclude "*/__pycache__/*" "*/.git/*"
 
